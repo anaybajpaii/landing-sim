@@ -1,2 +1,2 @@
-# landing-sim
+# Landing Simulator 
 This is a 6-DOF quadcopter simulator that tracks a moving landing marker with a noisy, delayed simulated camera, estimates its motion with a Kalman filter, and lands on it using a cascaded PID controller and a landing state machine. It is phase 1 of a two-repo project: the portable core (math, control, estimation, guidance) is written to move unchanged onto a real drone in landing-drone.
