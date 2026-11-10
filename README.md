@@ -1,2 +1,2 @@
 # landing-sim
-A from-scratch C++17 quadcopter simulator in which a drone locks onto a moving marker, matches its velocity and lands on it, built with portable, allocation-free controllers and estimators meant to run on a Teensy flight controller.
+This is a 6-DOF quadcopter simulator that tracks a moving landing marker with a noisy, delayed simulated camera, estimates its motion with a Kalman filter, and lands on it using a cascaded PID controller and a landing state machine. It is phase 1 of a two-repo project: the portable core (math, control, estimation, guidance) is written to move unchanged onto a real drone in landing-drone.
