@@ -13,3 +13,13 @@ add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion)
 
 add_executable(landing_sim sim/main.cpp)
 target_include_directories(landing_sim PRIVATE sim)
+
+enable_testing()
+
+function(add_unit_test name)
+    add_executable(${name} tests/${name}.cpp)
+    target_include_directories(${name} PRIVATE sim core tests)
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+add_unit_test(test_logger)
