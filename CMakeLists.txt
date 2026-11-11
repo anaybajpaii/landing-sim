@@ -12,3 +12,4 @@ endif()
 add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion)
 
 add_executable(landing_sim sim/main.cpp)
+target_include_directories(landing_sim PRIVATE sim)
