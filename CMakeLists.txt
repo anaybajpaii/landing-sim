@@ -23,3 +23,4 @@ function(add_unit_test name)
 endfunction()
 
 add_unit_test(test_logger)
+add_unit_test(test_vec3)
