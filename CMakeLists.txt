@@ -12,7 +12,7 @@ endif()
 add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion)
 
 add_executable(landing_sim sim/main.cpp)
-target_include_directories(landing_sim PRIVATE sim)
+target_include_directories(landing_sim PRIVATE sim core)
 
 enable_testing()
 
@@ -26,3 +26,4 @@ add_unit_test(test_logger)
 add_unit_test(test_vec3)
 add_unit_test(test_quat)
 add_unit_test(test_attitude)
+add_unit_test(test_rigid_body)
