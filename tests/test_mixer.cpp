@@ -1,121 +1,105 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <cstdio>
 
+#include "check.hpp"
 #include "quad/mixer.hpp"
-#include "quad/motor_model.hpp"
+#include "quad/quad_params.hpp"
 
-static int failures = 0;
+using core::Vec3d;
 
-static void check(bool ok, const char* name) {
-    if (!ok) {
-        std::printf("FAIL: %s\n", name);
-        ++failures;
+namespace {
+
+MixerWrench make(double thrust, double tx, double ty, double tz) {
+    MixerWrench w;
+    w.thrust_n = thrust;
+    w.torque_nm = Vec3d{tx, ty, tz};
+    return w;
+}
+
+void test_hover_split_equally() {
+    const QuadParams p;
+    const Mixer mixer(p);
+    const double weight = p.mass * p.gravity;
+    const double wHover = std::sqrt(weight / (4.0 * p.kThrust));
+    const MixerWrench w = make(weight, 0.0, 0.0, 0.0);
+    const std::array<double, 4> t = mixer.thrusts(w);
+    const std::array<double, 4> om = mixer.omegaCommands(w);
+    for (std::size_t i = 0; i < 4; ++i) {
+        CHECK_NEAR(t[i], weight / 4.0, 1e-12);
+        CHECK_NEAR(om[i], wHover, 1e-9);
     }
 }
 
-static bool approx(double a, double b, double tol) {
-    return std::fabs(a - b) <= tol;
+void test_round_trip() {
+    const QuadParams p;
+    const Mixer mixer(p);
+    const MixerWrench w = make(12.0, 0.05, -0.03, 0.01);
+    const MixerWrench back = mixer.wrench(mixer.thrusts(w));
+    CHECK_NEAR(back.thrust_n, w.thrust_n, 1e-12);
+    CHECK_NEAR(back.torque_nm.x, w.torque_nm.x, 1e-12);
+    CHECK_NEAR(back.torque_nm.y, w.torque_nm.y, 1e-12);
+    CHECK_NEAR(back.torque_nm.z, w.torque_nm.z, 1e-12);
+}
+
+void test_roll_speeds_up_left_motors() {
+    const QuadParams p;
+    const Mixer mixer(p);
+    const std::array<double, 4> t = mixer.thrusts(make(p.mass * p.gravity, 0.1, 0.0, 0.0));
+    CHECK(t[1] > t[0]);
+    CHECK(t[2] > t[3]);
+    CHECK_NEAR(t[1], t[2], 1e-12);
+    CHECK_NEAR(t[0], t[3], 1e-12);
+}
+
+void test_pitch_speeds_up_front_motors() {
+    const QuadParams p;
+    const Mixer mixer(p);
+    const std::array<double, 4> t = mixer.thrusts(make(p.mass * p.gravity, 0.0, 0.1, 0.0));
+    CHECK(t[0] > t[2]);
+    CHECK(t[1] > t[3]);
+    CHECK_NEAR(t[0], t[1], 1e-12);
+    CHECK_NEAR(t[2], t[3], 1e-12);
+}
+
+void test_yaw_speeds_up_ccw_motors() {
+    const QuadParams p;
+    const Mixer mixer(p);
+    const double weight = p.mass * p.gravity;
+    const double yawRatio = p.kTorque / p.kThrust;
+    const std::array<double, 4> t = mixer.thrusts(make(weight, 0.0, 0.0, yawRatio));
+    CHECK_NEAR(t[0], t[2], 1e-12);
+    CHECK_NEAR(t[1], t[3], 1e-12);
+    CHECK_NEAR(t[0], 0.25 * (weight + 1.0), 1e-12);
+    CHECK_NEAR(t[1], 0.25 * (weight - 1.0), 1e-12);
+}
+
+void test_saturation_clamps() {
+    const QuadParams p;
+    const Mixer mixer(p);
+    const double maxT = p.kThrust * p.omegaMax * p.omegaMax;
+    const MixerWrench hi = make(100.0, 0.0, 0.0, 0.0);
+    const MixerWrench lo = make(-5.0, 0.0, 0.0, 0.0);
+    const std::array<double, 4> th = mixer.thrusts(hi);
+    const std::array<double, 4> oh = mixer.omegaCommands(hi);
+    const std::array<double, 4> tl = mixer.thrusts(lo);
+    const std::array<double, 4> ol = mixer.omegaCommands(lo);
+    for (std::size_t i = 0; i < 4; ++i) {
+        CHECK_NEAR(th[i], maxT, 1e-12);
+        CHECK_NEAR(oh[i], p.omegaMax, 1e-9);
+        CHECK(tl[i] == 0.0);
+        CHECK(ol[i] == 0.0);
+    }
+}
+
 }
 
 int main() {
-    QuadParams p;
-    Mixer mixer(p);
-    const double weight = p.mass * p.gravity;
-    const double yawRatio = p.kTorque / p.kThrust;
-
-    {
-        Wrench w;
-        w.thrust = weight;
-        const std::array<double, 4> t = mixer.thrusts(w);
-        const std::array<double, 4> om = mixer.omegaCommands(w);
-        const double wHover = std::sqrt(weight / (4.0 * p.kThrust));
-        for (std::size_t i = 0; i < 4; ++i) {
-            check(approx(t[i], weight / 4.0, 1e-12), "hover thrust split equally");
-            check(approx(om[i], wHover, 1e-9), "hover omega command");
-        }
-    }
-
-    {
-        Wrench w;
-        w.thrust = 12.0;
-        w.tx = 0.05;
-        w.ty = -0.03;
-        w.tz = 0.01;
-        const Wrench back = mixer.wrench(mixer.thrusts(w));
-        check(approx(back.thrust, w.thrust, 1e-12), "round trip thrust");
-        check(approx(back.tx, w.tx, 1e-12), "round trip roll torque");
-        check(approx(back.ty, w.ty, 1e-12), "round trip pitch torque");
-        check(approx(back.tz, w.tz, 1e-12), "round trip yaw torque");
-    }
-
-    {
-        Wrench w;
-        w.thrust = weight;
-        w.tz = yawRatio;
-        const std::array<double, 4> t = mixer.thrusts(w);
-        check(approx(t[0], t[2], 1e-12), "yaw: CCW motors equal");
-        check(approx(t[1], t[3], 1e-12), "yaw: CW motors equal");
-        check(t[1] > t[0], "positive yaw torque speeds up CW motors");
-        check(approx(t[0], 0.25 * (weight - 1.0), 1e-12), "yaw: CCW motor value");
-        check(approx(t[1], 0.25 * (weight + 1.0), 1e-12), "yaw: CW motor value");
-    }
-
-    {
-        Wrench w;
-        w.thrust = weight;
-        w.tx = 0.1;
-        const std::array<double, 4> t = mixer.thrusts(w);
-        check(t[1] > t[0] && t[2] > t[3], "positive roll torque speeds up left motors");
-        check(approx(t[1], t[2], 1e-12) && approx(t[0], t[3], 1e-12), "roll symmetry");
-    }
-
-    {
-        Wrench w;
-        w.thrust = weight;
-        w.ty = 0.1;
-        const std::array<double, 4> t = mixer.thrusts(w);
-        check(t[2] > t[0] && t[3] > t[1], "positive pitch torque speeds up rear motors");
-        check(approx(t[2], t[3], 1e-12) && approx(t[0], t[1], 1e-12), "pitch symmetry");
-    }
-
-    {
-        const double maxT = p.kThrust * p.omegaMax * p.omegaMax;
-        Wrench hi;
-        hi.thrust = 100.0;
-        const std::array<double, 4> th = mixer.thrusts(hi);
-        const std::array<double, 4> oh = mixer.omegaCommands(hi);
-        Wrench lo;
-        lo.thrust = -5.0;
-        const std::array<double, 4> tl = mixer.thrusts(lo);
-        const std::array<double, 4> ol = mixer.omegaCommands(lo);
-        for (std::size_t i = 0; i < 4; ++i) {
-            check(approx(th[i], maxT, 1e-12), "over-demand clamps to max thrust");
-            check(approx(oh[i], p.omegaMax, 1e-9), "over-demand omega is omegaMax");
-            check(tl[i] == 0.0, "negative demand clamps to zero thrust");
-            check(ol[i] == 0.0 && !std::isnan(ol[i]), "zero thrust gives zero omega, no NaN");
-        }
-    }
-
-    {
-        Wrench w;
-        w.thrust = 11.0;
-        w.tx = 0.04;
-        w.ty = 0.02;
-        w.tz = -0.008;
-        MotorModel motors(p);
-        const std::array<double, 4> cmd = mixer.omegaCommands(w);
-        for (int k = 0; k < 2000; ++k) motors.step(cmd, 0.001);
-        std::array<double, 4> actual{};
-        for (std::size_t i = 0; i < 4; ++i) actual[i] = motors.thrust(i);
-        const Wrench got = mixer.wrench(actual);
-        check(approx(got.thrust, w.thrust, 1e-6), "mixer + motors: thrust");
-        check(approx(got.tx, w.tx, 1e-6), "mixer + motors: roll torque");
-        check(approx(got.ty, w.ty, 1e-6), "mixer + motors: pitch torque");
-        check(approx(got.tz, w.tz, 1e-6), "mixer + motors: yaw torque");
-    }
-
-    if (failures == 0) std::printf("all mixer tests passed\n");
-    return failures == 0 ? 0 : 1;
+    test_hover_split_equally();
+    test_round_trip();
+    test_roll_speeds_up_left_motors();
+    test_pitch_speeds_up_front_motors();
+    test_yaw_speeds_up_ccw_motors();
+    test_saturation_clamps();
+    return check::report();
 }

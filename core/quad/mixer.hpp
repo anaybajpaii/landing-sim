@@ -2,22 +2,21 @@
 
 #include <array>
 
+#include "math/vec3.hpp"
 #include "quad_params.hpp"
 
-struct Wrench {
-    double thrust = 0.0;
-    double tx = 0.0;
-    double ty = 0.0;
-    double tz = 0.0;
+struct MixerWrench {
+    double thrust_n = 0.0;
+    core::Vec3d torque_nm{};
 };
 
 class Mixer {
 public:
     explicit Mixer(const QuadParams& params);
 
-    std::array<double, 4> thrusts(const Wrench& w) const;
-    std::array<double, 4> omegaCommands(const Wrench& w) const;
-    Wrench wrench(const std::array<double, 4>& motorThrusts) const;
+    std::array<double, 4> thrusts(const MixerWrench& w) const;
+    std::array<double, 4> omegaCommands(const MixerWrench& w) const;
+    MixerWrench wrench(const std::array<double, 4>& motorThrusts) const;
 
 private:
     double lever_;

@@ -7,8 +7,8 @@
 namespace {
 
 constexpr std::array<double, 4> kRollSign{-1.0, 1.0, 1.0, -1.0};
-constexpr std::array<double, 4> kPitchSign{-1.0, -1.0, 1.0, 1.0};
-constexpr std::array<double, 4> kYawSign{-1.0, 1.0, -1.0, 1.0};
+constexpr std::array<double, 4> kPitchSign{1.0, 1.0, -1.0, -1.0};
+constexpr std::array<double, 4> kYawSign{1.0, -1.0, 1.0, -1.0};
 
 }
 
@@ -18,18 +18,18 @@ Mixer::Mixer(const QuadParams& params)
       kThrust_(params.kThrust),
       maxThrust_(params.kThrust * params.omegaMax * params.omegaMax) {}
 
-std::array<double, 4> Mixer::thrusts(const Wrench& w) const {
+std::array<double, 4> Mixer::thrusts(const MixerWrench& w) const {
     std::array<double, 4> out{};
     for (std::size_t i = 0; i < 4; ++i) {
-        const double raw = 0.25 * (w.thrust + kRollSign[i] * w.tx / lever_ +
-                                   kPitchSign[i] * w.ty / lever_ +
-                                   kYawSign[i] * w.tz / yawRatio_);
+        const double raw = 0.25 * (w.thrust_n + kRollSign[i] * w.torque_nm.x / lever_ +
+                                   kPitchSign[i] * w.torque_nm.y / lever_ +
+                                   kYawSign[i] * w.torque_nm.z / yawRatio_);
         out[i] = std::clamp(raw, 0.0, maxThrust_);
     }
     return out;
 }
 
-std::array<double, 4> Mixer::omegaCommands(const Wrench& w) const {
+std::array<double, 4> Mixer::omegaCommands(const MixerWrench& w) const {
     const std::array<double, 4> t = thrusts(w);
     std::array<double, 4> out{};
     for (std::size_t i = 0; i < 4; ++i) {
@@ -38,16 +38,16 @@ std::array<double, 4> Mixer::omegaCommands(const Wrench& w) const {
     return out;
 }
 
-Wrench Mixer::wrench(const std::array<double, 4>& motorThrusts) const {
-    Wrench w;
+MixerWrench Mixer::wrench(const std::array<double, 4>& motorThrusts) const {
+    MixerWrench w;
     for (std::size_t i = 0; i < 4; ++i) {
-        w.thrust += motorThrusts[i];
-        w.tx += kRollSign[i] * motorThrusts[i];
-        w.ty += kPitchSign[i] * motorThrusts[i];
-        w.tz += kYawSign[i] * motorThrusts[i];
+        w.thrust_n += motorThrusts[i];
+        w.torque_nm.x += kRollSign[i] * motorThrusts[i];
+        w.torque_nm.y += kPitchSign[i] * motorThrusts[i];
+        w.torque_nm.z += kYawSign[i] * motorThrusts[i];
     }
-    w.tx *= lever_;
-    w.ty *= lever_;
-    w.tz *= yawRatio_;
+    w.torque_nm.x *= lever_;
+    w.torque_nm.y *= lever_;
+    w.torque_nm.z *= yawRatio_;
     return w;
 }
