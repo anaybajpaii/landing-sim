@@ -17,20 +17,26 @@ def main():
     if "t" not in df.columns:
         raise SystemExit("log has no 't' column")
 
-    cols = args.cols or [c for c in df.columns if c != "t"]
-    missing = [c for c in cols if c not in df.columns]
+    groups = args.cols or [c for c in df.columns if c != "t"]
+    names = [name for group in groups for name in group.split(",")]
+    missing = [c for c in names if c not in df.columns]
     if missing:
         raise SystemExit(f"unknown columns: {missing}")
 
-    fig, axes = plt.subplots(len(cols), 1, sharex=True, figsize=(8, 2.2 * len(cols) + 1), squeeze=False)
-    for ax, col in zip(axes[:, 0], cols):
-        ax.plot(df["t"], df[col])
-        ax.set_ylabel(col)
+    fig, axes = plt.subplots(len(groups), 1, sharex=True, figsize=(8, 2.2 * len(groups) + 1), squeeze=False)
+    for ax, group in zip(axes[:, 0], groups):
+        members = group.split(",")
+        for col in members:
+            ax.plot(df["t"], df[col], label=col)
+        ax.set_ylabel(" / ".join(members))
+        if len(members) > 1:
+            ax.legend(loc="best")
         ax.grid(True, alpha=0.3)
     axes[-1, 0].set_xlabel("t [s]")
     fig.tight_layout()
 
     out = args.out or args.csv.with_suffix(".png")
+    out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=150)
     print(f"saved {out}")
     if args.show:

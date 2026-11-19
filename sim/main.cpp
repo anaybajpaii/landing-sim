@@ -4,7 +4,11 @@
 #include <exception>
 #include <string>
 
+#include "control/attitude_controller.hpp"
 #include "logger/csv_logger.hpp"
+#include "math/vec3.hpp"
+#include "plant/quad.hpp"
+#include "quad/quad_params.hpp"
 
 namespace {
 
@@ -19,11 +23,45 @@ void run_smoke(const std::string& out_path) {
     }
 }
 
+void run_roll_step(const std::string& out_path) {
+    const QuadParams params;
+    sim::Quad quad(params);
+    core::AttitudeController controller;
+
+    const double hover_omega = std::sqrt(params.mass * params.gravity / (4.0 * params.kThrust));
+    quad.reset(sim::State{}, hover_omega);
+
+    sim::CsvLogger log(out_path,
+                       {"t", "roll_sp", "roll", "pitch", "yaw", "omega_x", "torque_x"});
+
+    const double dt = 1e-3;
+    const double step_time = 0.5;
+    const double step_size = 0.2;
+    const int steps = 4000;
+    const int log_every = 10;
+
+    for (int i = 0; i <= steps; ++i) {
+        const double t = i * dt;
+        const double roll_sp = (t >= step_time) ? step_size : 0.0;
+
+        const sim::State& s = quad.state();
+        const core::Vec3d torque =
+            controller.update(s.attitude, s.omega, core::Vec3d{roll_sp, 0.0, 0.0}, dt);
+
+        if (i % log_every == 0) {
+            const core::Vec3d e = core::euler_zyx(s.attitude);
+            log.row({t, roll_sp, e.x, e.y, e.z, s.omega.x, torque.x});
+        }
+
+        quad.step(params.mass * params.gravity, torque, dt);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
     std::string scenario = "smoke";
-    std::string out_path = "logs/smoke.csv";
+    std::string out_path;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--scenario") == 0 && i + 1 < argc) {
@@ -31,14 +69,21 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
             out_path = argv[++i];
         } else {
-            std::fprintf(stderr, "usage: landing_sim [--scenario smoke] [--out path.csv]\n");
+            std::fprintf(stderr,
+                         "usage: landing_sim [--scenario smoke|roll_step] [--out path.csv]\n");
             return 1;
         }
+    }
+
+    if (out_path.empty()) {
+        out_path = "logs/" + scenario + ".csv";
     }
 
     try {
         if (scenario == "smoke") {
             run_smoke(out_path);
+        } else if (scenario == "roll_step") {
+            run_roll_step(out_path);
         } else {
             std::fprintf(stderr, "unknown scenario: %s\n", scenario.c_str());
             return 1;

@@ -11,7 +11,7 @@ endif()
 
 add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion)
 
-add_executable(landing_sim sim/main.cpp)
+add_executable(landing_sim sim/main.cpp core/quad/mixer.cpp core/quad/motor_model.cpp)
 target_include_directories(landing_sim PRIVATE sim core)
 
 enable_testing()
