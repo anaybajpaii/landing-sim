@@ -1,10 +1,46 @@
-# Engineering log
+# Log
+## 1. Problem: integrator dependencies were undefined
 
-## 2026-11-16
-Built the motor model, mixer and Quad plant. The mixer first assumed a z-up body frame, but the rigid body is z-down (gravity along +z, thrust along body -z). Found it by reading the integrator tests. Flipped the pitch and yaw signs and rewrote the mixer tests. The roll, pitch and yaw checks in test_quad now run against the real dynamics.
+**Date:** Nov 13
 
-## 2026-11-19
-Attitude controller (angle loop into rate loop). Roll step of 0.2 rad settles about 0.7 s after the step with no visible overshoot. Slower than my hand estimate, so the loop is more damped than I calculated. Pitch and yaw stay at floating-point noise, so the axes are decoupled. Altitude controller: climb rate only peaks near 2.2 m/s even though the cap is 3 m/s, because the climb-rate setpoint collapses as the altitude error shrinks. Left it as is; alt_kp is the knob if I want faster climbs.
+**Result:** The integrator implementation failed to compile because `State`, `StateDerivative`, `Wrench`, `VehicleParams` and `derivative()` were undefined.
 
-## 2026-11-20
-Position controller (position into velocity into tilt). [Add what the waypoint test and plot showed, and anything you changed.]
+**Attempt:** Traced the missing declarations back to their respective headers and checked whether the required types and functions had actually been implemented.
+
+**Fix:** Implemented the missing definitions in `rigid_body.hpp` and `vehicle_params.hpp`. The issue was not with the integrator itself; its dependencies were still empty.
+
+---
+
+## 2. Problem: quaternion API names did not match the tests
+
+**Date:** Nov 12
+
+**Result:** `test_attitude.cpp` reported that `core::euler_zyx` and `core::from_euler_zyx` did not exist.
+
+**Attempt:** Checked the quaternion header and compared the function names exposed by the implementation with those expected by the tests.
+
+**Fix:** Renamed `to_euler` to `euler_zyx` and `from_euler` to `from_euler_zyx` in `core/math/quat.hpp`. The implementation was already present; the problem was an API naming mismatch.
+
+---
+
+## 3. Problem: RK4 tests were not catching incorrect integration methods
+
+**Date:** Nov 13
+
+**Result:** The initial integrator tests passed even when the velocity integration was replaced with Euler integration. Constant acceleration made the incorrect implementation difficult to distinguish from RK4.
+
+**Attempt:** Tested several deliberately incorrect implementations, including Euler integration, midpoint integration, equal RK4 weights and an incorrect fourth stage. Investigated why the existing tests failed to detect them.
+
+**Fix:** Added a rotating-thrust test with an analytical reference solution. This introduced changing acceleration and exposed errors that the constant-acceleration tests missed. Also checked quaternion normalisation after integration.
+
+---
+
+## 4. Problem: mixer signs wrong for the vehicle's frame
+
+**Date:** Nov 16
+
+**Result:** The mixer's tests passed, but its pitch and yaw signs assumed a z-up body frame while the rigid body uses z-down (gravity along +z, hover thrust along body -z).
+
+**Attempt:** Read `test_integrator` to check which direction gravity and thrust pointed.
+
+**Fix:** Flipped the pitch and yaw signs and rewrote the mixer tests so the roll, pitch and yaw checks in `test_quad` ran against the actual rigid-body dynamics.
