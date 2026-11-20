@@ -9,6 +9,7 @@
 #include "control/position_controller.hpp"
 #include "logger/csv_logger.hpp"
 #include "math/vec3.hpp"
+#include "plant/platform.hpp"
 #include "plant/quad.hpp"
 #include "quad/quad_params.hpp"
 
@@ -153,6 +154,55 @@ void run_waypoint(const std::string& out_path) {
     }
 }
 
+void run_platform_track(const std::string& out_path) {
+    const QuadParams params;
+    sim::Quad quad(params);
+    core::AttitudeController attitude;
+    core::PositionController position;
+
+    core::AltitudeConfig alt_cfg;
+    alt_cfg.mass = params.mass;
+    alt_cfg.gravity = params.gravity;
+    alt_cfg.max_thrust = 4.0 * params.kThrust * params.omegaMax * params.omegaMax;
+    core::AltitudeController altitude(alt_cfg);
+
+    sim::Platform platform;
+    platform.position = core::Vec3d{3.0, 0.0, 0.0};
+    platform.velocity = core::Vec3d{0.5, 0.0, 0.0};
+
+    const double hover_omega = std::sqrt(params.mass * params.gravity / (4.0 * params.kThrust));
+    sim::State start;
+    start.position.z = -1.0;
+    quad.reset(start, hover_omega);
+
+    sim::CsvLogger log(out_path,
+                       {"t", "plat_x", "x", "plat_y", "y", "err_x", "err_y", "alt"});
+
+    const double dt = 1e-3;
+    const int steps = 20000;
+    const int log_every = 10;
+
+    for (int i = 0; i <= steps; ++i) {
+        const double t = i * dt;
+
+        const sim::State& s = quad.state();
+        const double thrust = altitude.update(1.0, s.position, s.velocity, s.attitude, dt);
+        const core::Vec3d tilt = position.update(platform.position, platform.velocity,
+                                                 s.position, s.velocity, s.attitude, dt);
+        const core::Vec3d torque =
+            attitude.update(s.attitude, s.omega, core::Vec3d{tilt.x, tilt.y, 0.0}, dt);
+
+        if (i % log_every == 0) {
+            log.row({t, platform.position.x, s.position.x, platform.position.y, s.position.y,
+                     platform.position.x - s.position.x, platform.position.y - s.position.y,
+                     -s.position.z});
+        }
+
+        quad.step(thrust, torque, dt);
+        platform.step(dt);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -166,7 +216,8 @@ int main(int argc, char** argv) {
             out_path = argv[++i];
         } else {
             std::fprintf(stderr,
-                         "usage: landing_sim [--scenario smoke|roll_step|altitude_step|waypoint] "
+                         "usage: landing_sim [--scenario "
+                         "smoke|roll_step|altitude_step|waypoint|platform_track] "
                          "[--out path.csv]\n");
             return 1;
         }
@@ -185,6 +236,8 @@ int main(int argc, char** argv) {
             run_altitude_step(out_path);
         } else if (scenario == "waypoint") {
             run_waypoint(out_path);
+        } else if (scenario == "platform_track") {
+            run_platform_track(out_path);
         } else {
             std::fprintf(stderr, "unknown scenario: %s\n", scenario.c_str());
             return 1;
