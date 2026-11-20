@@ -12,6 +12,7 @@
 #include "plant/platform.hpp"
 #include "plant/quad.hpp"
 #include "quad/quad_params.hpp"
+#include "sensors/camera.hpp"
 
 namespace {
 
@@ -203,6 +204,67 @@ void run_platform_track(const std::string& out_path) {
     }
 }
 
+void run_camera_demo(const std::string& out_path) {
+    const QuadParams params;
+    sim::Quad quad(params);
+    core::AttitudeController attitude;
+    core::PositionController position;
+
+    core::AltitudeConfig alt_cfg;
+    alt_cfg.mass = params.mass;
+    alt_cfg.gravity = params.gravity;
+    alt_cfg.max_thrust = 4.0 * params.kThrust * params.omegaMax * params.omegaMax;
+    core::AltitudeController altitude(alt_cfg);
+
+    sim::Platform platform;
+    platform.position = core::Vec3d{3.0, 0.0, 0.0};
+    platform.velocity = core::Vec3d{0.5, 0.0, 0.0};
+
+    sim::Camera camera;
+    core::Vec3d held{};
+    double held_time = 0.0;
+
+    const double hover_omega = std::sqrt(params.mass * params.gravity / (4.0 * params.kThrust));
+    sim::State start;
+    start.position.z = -1.0;
+    quad.reset(start, hover_omega);
+
+    sim::CsvLogger log(out_path, {"t", "err_x_true", "err_x_meas", "age", "got"});
+
+    const double dt = 1e-3;
+    const int steps = 12000;
+    const int log_every = 5;
+
+    for (int i = 0; i <= steps; ++i) {
+        const double t = i * dt;
+        const sim::State& s = quad.state();
+
+        const core::Vec3d true_rel{platform.position.x - s.position.x,
+                                   platform.position.y - s.position.y, 0.0};
+        camera.capture(t, true_rel, -s.position.z);
+        double got = 0.0;
+        sim::CameraMeasurement m;
+        while (camera.poll(t, m)) {
+            held = m.rel_pos;
+            held_time = m.capture_time;
+            got = 1.0;
+        }
+
+        const double thrust = altitude.update(1.0, s.position, s.velocity, s.attitude, dt);
+        const core::Vec3d tilt = position.update(platform.position, platform.velocity,
+                                                 s.position, s.velocity, s.attitude, dt);
+        const core::Vec3d torque =
+            attitude.update(s.attitude, s.omega, core::Vec3d{tilt.x, tilt.y, 0.0}, dt);
+
+        if (i % log_every == 0) {
+            log.row({t, true_rel.x, held.x, t - held_time, got});
+        }
+
+        quad.step(thrust, torque, dt);
+        platform.step(dt);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -217,7 +279,7 @@ int main(int argc, char** argv) {
         } else {
             std::fprintf(stderr,
                          "usage: landing_sim [--scenario "
-                         "smoke|roll_step|altitude_step|waypoint|platform_track] "
+                         "smoke|roll_step|altitude_step|waypoint|platform_track|camera_demo] "
                          "[--out path.csv]\n");
             return 1;
         }
@@ -238,6 +300,8 @@ int main(int argc, char** argv) {
             run_waypoint(out_path);
         } else if (scenario == "platform_track") {
             run_platform_track(out_path);
+        } else if (scenario == "camera_demo") {
+            run_camera_demo(out_path);
         } else {
             std::fprintf(stderr, "unknown scenario: %s\n", scenario.c_str());
             return 1;
