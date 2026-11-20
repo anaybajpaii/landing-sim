@@ -44,3 +44,15 @@
 **Attempt:** Read `test_integrator` to check which direction gravity and thrust pointed.
 
 **Fix:** Flipped the pitch and yaw signs and rewrote the mixer tests so the roll, pitch and yaw checks in `test_quad` ran against the actual rigid-body dynamics.
+
+---
+
+## 5. Problem: platform test failed because the probe sat on the zone boundary
+
+**Date:** Nov 20
+
+**Result:** `test_platform` failed on `test_zone_follows_the_platform` (`p.contains_xy(probe)` at line 55). The other 13 tests passed.
+
+**Attempt:** Worked through the numbers in the test. The platform moves at 0.5 m/s for 3000 steps of 1 ms, so it ends near x = 1.5 m. The probe is at x = 2.0 and the zone half-size is 0.5, so the probe was exactly on the zone edge. After 3000 floating-point additions the platform position is not exactly 1.5, so the check could land on either side of the boundary.
+
+**Fix:** Changed the test to run 3500 steps. The platform ends near x = 1.75 m, so the probe is 0.25 m inside the zone and the result no longer depends on rounding. The platform code was correct; the test was written too tight.
