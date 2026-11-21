@@ -13,6 +13,7 @@
 #include "estimation/target_filter.hpp"
 #include "logger/csv_logger.hpp"
 #include "math/vec3.hpp"
+#include "pipeline/landing_pipeline.hpp"
 #include "plant/platform.hpp"
 #include "plant/quad.hpp"
 #include "quad/quad_params.hpp"
@@ -420,6 +421,35 @@ void run_track_descend(const std::string& out_path) {
     }
 }
 
+void run_land(const std::string& out_path) {
+    sim::LandingPipeline pipeline;
+
+    sim::CsvLogger log(out_path,
+                       {"t", "plat_x", "x", "err_h", "rel_speed", "alt", "alt_sp", "state"});
+
+    const int max_steps = 30000;
+    const int log_every = 10;
+    int landed_steps = 0;
+
+    for (int i = 0; i <= max_steps; ++i) {
+        pipeline.step();
+
+        if (i % log_every == 0) {
+            log.row({pipeline.time(), pipeline.platform().position.x, pipeline.state().position.x,
+                     pipeline.true_horiz_error(), pipeline.true_rel_speed(), pipeline.altitude(),
+                     pipeline.last_guidance().alt_sp,
+                     static_cast<double>(static_cast<int>(pipeline.last_output().state))});
+        }
+
+        if (pipeline.last_output().landed) {
+            ++landed_steps;
+            if (landed_steps > 1000) {
+                break;
+            }
+        }
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -435,7 +465,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr,
                          "usage: landing_sim [--scenario "
                          "smoke|roll_step|altitude_step|waypoint|platform_track|camera_demo|"
-                         "filter_demo|track_descend] [--out path.csv]\n");
+                         "filter_demo|track_descend|land] [--out path.csv]\n");
             return 1;
         }
     }
@@ -461,6 +491,8 @@ int main(int argc, char** argv) {
             run_filter_demo(out_path);
         } else if (scenario == "track_descend") {
             run_track_descend(out_path);
+        } else if (scenario == "land") {
+            run_land(out_path);
         } else {
             std::fprintf(stderr, "unknown scenario: %s\n", scenario.c_str());
             return 1;

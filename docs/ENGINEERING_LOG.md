@@ -56,3 +56,13 @@
 **Attempt:** Worked through the numbers in the test. The platform moves at 0.5 m/s for 3000 steps of 1 ms, so it ends near x = 1.5 m. The probe is at x = 2.0 and the zone half-size is 0.5, so the probe was exactly on the zone edge. After 3000 floating-point additions the platform position is not exactly 1.5, so the check could land on either side of the boundary.
 
 **Fix:** Changed the test to run 3500 steps. The platform ends near x = 1.75 m, so the probe is 0.25 m inside the zone and the result no longer depends on rounding. The platform code was correct; the test was written too tight.
+
+## 6. Problem: new scenario missing because main.cpp was still the old version
+
+**Date:** Nov 21
+
+**Result:** Plotting `logs\track_descend.csv` failed with `FileNotFoundError`, and `cmake --build build` printed `ninja: no work to do`.
+
+**Attempt:** Checked which of the commit 24 changes were actually on disk. `CMakeLists.txt`, `tracking_guidance.hpp` and `test_tracking_guidance.cpp` were all present, but searching `sim/main.cpp` for `track_descend` found nothing.
+
+**Fix:** `main.cpp` was still the commit 23 version, so the executable had no `track_descend` scenario and wrote no CSV. Replaced `main.cpp` with the full updated file, after which it compiled and the scenario produced its plot. When the build says there's no work to do right after an edit, the first thing to check is that the edit is on disk.
