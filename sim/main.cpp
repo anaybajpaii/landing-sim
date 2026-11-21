@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -7,6 +8,7 @@
 #include "control/altitude_controller.hpp"
 #include "control/attitude_controller.hpp"
 #include "control/position_controller.hpp"
+#include "control/tracking_guidance.hpp"
 #include "estimation/history.hpp"
 #include "estimation/target_filter.hpp"
 #include "logger/csv_logger.hpp"
@@ -342,6 +344,82 @@ void run_filter_demo(const std::string& out_path) {
     }
 }
 
+void run_track_descend(const std::string& out_path) {
+    const QuadParams params;
+    sim::Quad quad(params);
+    core::AttitudeController attitude;
+    core::PositionController position;
+
+    core::AltitudeConfig alt_cfg;
+    alt_cfg.mass = params.mass;
+    alt_cfg.gravity = params.gravity;
+    alt_cfg.max_thrust = 4.0 * params.kThrust * params.omegaMax * params.omegaMax;
+    core::AltitudeController altitude(alt_cfg);
+
+    sim::Platform platform;
+    platform.position = core::Vec3d{3.0, 0.0, 0.0};
+    platform.velocity = core::Vec3d{0.5, 0.0, 0.0};
+
+    const sim::CameraConfig cam_cfg;
+    sim::Camera camera(cam_cfg);
+    core::TargetFilter filter;
+    core::PositionHistory<256> history;
+    core::TrackingGuidance guidance;
+
+    const double hover_omega = std::sqrt(params.mass * params.gravity / (4.0 * params.kThrust));
+    sim::State start;
+    start.position.z = -1.0;
+    quad.reset(start, hover_omega);
+
+    sim::CsvLogger log(out_path, {"t", "plat_x", "x", "err_h", "alt", "alt_sp", "pos_sigma",
+                                  "tracking"});
+
+    const double dt = 1e-3;
+    const int steps = 20000;
+    const int log_every = 10;
+
+    for (int i = 0; i <= steps; ++i) {
+        const double t = i * dt;
+        const double approach_alt = (t < 8.0) ? 1.5 : 0.3;
+        const sim::State& s = quad.state();
+        const double altitude_m = -s.position.z;
+
+        history.push(t, s.position);
+        const core::Vec3d true_rel{platform.position.x - s.position.x,
+                                   platform.position.y - s.position.y, 0.0};
+        camera.capture(t, true_rel, altitude_m);
+        sim::CameraMeasurement m;
+        while (camera.poll(t, m)) {
+            core::Vec3d quad_then;
+            if (history.at(m.capture_time, quad_then)) {
+                const double sigma =
+                    cam_cfg.sigma_base_m + cam_cfg.sigma_per_m * std::max(altitude_m, 0.0);
+                filter.update(m.capture_time,
+                              core::Vec3d{quad_then.x + m.rel_pos.x, quad_then.y + m.rel_pos.y,
+                                          0.0},
+                              sigma);
+            }
+        }
+
+        const core::TargetEstimate est = filter.estimate(t);
+        const core::GuidanceOutput g = guidance.update(est, s.position, approach_alt, dt);
+
+        const double thrust = altitude.update(g.alt_sp, s.position, s.velocity, s.attitude, dt);
+        const core::Vec3d tilt =
+            position.update(g.pos_sp, g.vel_ff, s.position, s.velocity, s.attitude, dt);
+        const core::Vec3d torque =
+            attitude.update(s.attitude, s.omega, core::Vec3d{tilt.x, tilt.y, 0.0}, dt);
+
+        if (i % log_every == 0) {
+            log.row({t, platform.position.x, s.position.x, std::hypot(true_rel.x, true_rel.y),
+                     altitude_m, g.alt_sp, est.pos_sigma, g.tracking ? 1.0 : 0.0});
+        }
+
+        quad.step(thrust, torque, dt);
+        platform.step(dt);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -357,7 +435,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr,
                          "usage: landing_sim [--scenario "
                          "smoke|roll_step|altitude_step|waypoint|platform_track|camera_demo|"
-                         "filter_demo] [--out path.csv]\n");
+                         "filter_demo|track_descend] [--out path.csv]\n");
             return 1;
         }
     }
@@ -381,6 +459,8 @@ int main(int argc, char** argv) {
             run_camera_demo(out_path);
         } else if (scenario == "filter_demo") {
             run_filter_demo(out_path);
+        } else if (scenario == "track_descend") {
+            run_track_descend(out_path);
         } else {
             std::fprintf(stderr, "unknown scenario: %s\n", scenario.c_str());
             return 1;
