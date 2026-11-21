@@ -37,3 +37,4 @@ add_unit_test(test_altitude_controller core/quad/mixer.cpp core/quad/motor_model
 add_unit_test(test_position_controller core/quad/mixer.cpp core/quad/motor_model.cpp)
 add_unit_test(test_platform)
 add_unit_test(test_camera)
+add_unit_test(test_target_filter)

@@ -7,6 +7,8 @@
 #include "control/altitude_controller.hpp"
 #include "control/attitude_controller.hpp"
 #include "control/position_controller.hpp"
+#include "estimation/history.hpp"
+#include "estimation/target_filter.hpp"
 #include "logger/csv_logger.hpp"
 #include "math/vec3.hpp"
 #include "plant/platform.hpp"
@@ -265,6 +267,81 @@ void run_camera_demo(const std::string& out_path) {
     }
 }
 
+void run_filter_demo(const std::string& out_path) {
+    const QuadParams params;
+    sim::Quad quad(params);
+    core::AttitudeController attitude;
+    core::PositionController position;
+
+    core::AltitudeConfig alt_cfg;
+    alt_cfg.mass = params.mass;
+    alt_cfg.gravity = params.gravity;
+    alt_cfg.max_thrust = 4.0 * params.kThrust * params.omegaMax * params.omegaMax;
+    core::AltitudeController altitude(alt_cfg);
+
+    sim::Platform platform;
+    platform.position = core::Vec3d{3.0, 0.0, 0.0};
+    platform.velocity = core::Vec3d{0.5, 0.0, 0.0};
+
+    const sim::CameraConfig cam_cfg;
+    sim::Camera camera(cam_cfg);
+    core::TargetFilter filter;
+    core::PositionHistory<256> history;
+
+    const double hover_omega = std::sqrt(params.mass * params.gravity / (4.0 * params.kThrust));
+    sim::State start;
+    start.position.z = -1.0;
+    quad.reset(start, hover_omega);
+
+    sim::CsvLogger log(out_path, {"t", "plat_x", "est_x", "plat_vx", "est_vx", "err_x", "err_y",
+                                  "pos_sigma"});
+
+    const double dt = 1e-3;
+    const int steps = 12000;
+    const int log_every = 10;
+
+    for (int i = 0; i <= steps; ++i) {
+        const double t = i * dt;
+        const sim::State& s = quad.state();
+        const double altitude_m = -s.position.z;
+
+        history.push(t, s.position);
+        const core::Vec3d true_rel{platform.position.x - s.position.x,
+                                   platform.position.y - s.position.y, 0.0};
+        camera.capture(t, true_rel, altitude_m);
+        sim::CameraMeasurement m;
+        while (camera.poll(t, m)) {
+            core::Vec3d quad_then;
+            if (history.at(m.capture_time, quad_then)) {
+                const double sigma =
+                    cam_cfg.sigma_base_m + cam_cfg.sigma_per_m * std::max(altitude_m, 0.0);
+                filter.update(m.capture_time,
+                              core::Vec3d{quad_then.x + m.rel_pos.x, quad_then.y + m.rel_pos.y,
+                                          0.0},
+                              sigma);
+            }
+        }
+
+        const core::TargetEstimate est = filter.estimate(t);
+        const core::Vec3d pos_sp = est.valid ? est.position : core::Vec3d{0.0, 0.0, 0.0};
+        const core::Vec3d vel_ff = est.valid ? est.velocity : core::Vec3d{0.0, 0.0, 0.0};
+
+        const double thrust = altitude.update(1.0, s.position, s.velocity, s.attitude, dt);
+        const core::Vec3d tilt =
+            position.update(pos_sp, vel_ff, s.position, s.velocity, s.attitude, dt);
+        const core::Vec3d torque =
+            attitude.update(s.attitude, s.omega, core::Vec3d{tilt.x, tilt.y, 0.0}, dt);
+
+        if (i % log_every == 0) {
+            log.row({t, platform.position.x, est.position.x, platform.velocity.x, est.velocity.x,
+                     true_rel.x, true_rel.y, est.pos_sigma});
+        }
+
+        quad.step(thrust, torque, dt);
+        platform.step(dt);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -279,8 +356,8 @@ int main(int argc, char** argv) {
         } else {
             std::fprintf(stderr,
                          "usage: landing_sim [--scenario "
-                         "smoke|roll_step|altitude_step|waypoint|platform_track|camera_demo] "
-                         "[--out path.csv]\n");
+                         "smoke|roll_step|altitude_step|waypoint|platform_track|camera_demo|"
+                         "filter_demo] [--out path.csv]\n");
             return 1;
         }
     }
@@ -302,6 +379,8 @@ int main(int argc, char** argv) {
             run_platform_track(out_path);
         } else if (scenario == "camera_demo") {
             run_camera_demo(out_path);
+        } else if (scenario == "filter_demo") {
+            run_filter_demo(out_path);
         } else {
             std::fprintf(stderr, "unknown scenario: %s\n", scenario.c_str());
             return 1;
