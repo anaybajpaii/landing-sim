@@ -1,9 +1,12 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <string>
+#include <vector>
 
 #include "control/altitude_controller.hpp"
 #include "control/attitude_controller.hpp"
@@ -13,6 +16,7 @@
 #include "estimation/target_filter.hpp"
 #include "logger/csv_logger.hpp"
 #include "math/vec3.hpp"
+#include "pipeline/batch.hpp"
 #include "pipeline/landing_pipeline.hpp"
 #include "plant/platform.hpp"
 #include "plant/quad.hpp"
@@ -462,22 +466,66 @@ void run_land(const std::string& out_path) {
     }
 }
 
+void run_batch_scenario(const std::string& out_path, int runs, std::uint64_t seed) {
+    sim::BatchConfig cfg;
+    cfg.runs = runs;
+    cfg.seed = seed;
+
+    const std::vector<sim::RunResult> results = sim::run_batch(cfg);
+
+    sim::CsvLogger log(out_path,
+                       {"run", "plat_x0", "plat_y0", "heading_deg", "start_alt", "outcome",
+                        "touch_time", "vertical_speed", "rel_speed", "tilt_deg", "offset"});
+    for (const sim::RunResult& r : results) {
+        log.row({static_cast<double>(r.index), r.platform_x0, r.platform_y0,
+                 r.heading * 180.0 / kPi, r.start_alt,
+                 static_cast<double>(static_cast<int>(sim::classify(r))),
+                 r.touched ? r.td.time : -1.0, r.td.vertical_speed, r.td.rel_speed,
+                 r.td.tilt * 180.0 / kPi, r.td.offset});
+    }
+
+    const sim::BatchSummary s = sim::summarize(results);
+    std::printf("batch seed %llu: %d/%d landed (%.1f%%), 95%% lower bound %.1f%%\n",
+                static_cast<unsigned long long>(seed), s.successes, s.runs,
+                100.0 * s.success_rate, 100.0 * s.wilson_lower);
+    std::printf("failures: timeout %d, off_platform %d, hard_landing %d, relative_speed %d, "
+                "tilt %d\n",
+                s.timeouts, s.off_platform, s.hard_landings, s.relative_speed, s.tilt);
+    if (s.successes > 0) {
+        std::printf("successful landings: mean time %.1f s, worst offset %.2f m, "
+                    "worst descent %.2f m/s\n",
+                    s.mean_success_time, s.max_success_offset, s.max_success_vertical);
+    }
+    for (const sim::RunResult& r : results) {
+        if (sim::classify(r) != sim::Outcome::Success) {
+            std::printf("  run %d: %s\n", r.index, sim::outcome_name(sim::classify(r)));
+        }
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
     std::string scenario = "smoke";
     std::string out_path;
+    int runs = 50;
+    std::uint64_t seed = 1;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--scenario") == 0 && i + 1 < argc) {
             scenario = argv[++i];
         } else if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
             out_path = argv[++i];
+        } else if (std::strcmp(argv[i], "--runs") == 0 && i + 1 < argc) {
+            runs = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
+            seed = static_cast<std::uint64_t>(std::strtoull(argv[++i], nullptr, 10));
         } else {
             std::fprintf(stderr,
                          "usage: landing_sim [--scenario "
                          "smoke|roll_step|altitude_step|waypoint|platform_track|camera_demo|"
-                         "filter_demo|track_descend|land] [--out path.csv]\n");
+                         "filter_demo|track_descend|land|batch] [--out path.csv] "
+                         "[--runs N] [--seed S]\n");
             return 1;
         }
     }
@@ -505,6 +553,12 @@ int main(int argc, char** argv) {
             run_track_descend(out_path);
         } else if (scenario == "land") {
             run_land(out_path);
+        } else if (scenario == "batch") {
+            if (runs < 1) {
+                std::fprintf(stderr, "--runs must be at least 1\n");
+                return 1;
+            }
+            run_batch_scenario(out_path, runs, seed);
         } else {
             std::fprintf(stderr, "unknown scenario: %s\n", scenario.c_str());
             return 1;
