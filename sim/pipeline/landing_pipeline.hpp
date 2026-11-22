@@ -11,6 +11,7 @@
 #include "estimation/target_filter.hpp"
 #include "guidance/landing_state_machine.hpp"
 #include "math/vec3.hpp"
+#include "pipeline/touchdown.hpp"
 #include "plant/platform.hpp"
 #include "plant/quad.hpp"
 #include "quad/quad_params.hpp"
@@ -22,8 +23,10 @@ struct PipelineConfig {
     CameraConfig camera;
     core::LandingConfig landing;
     core::TrackingConfig tracking;
+    TouchdownCriteria touchdown;
     core::Vec3d platform_position{3.0, 0.0, 0.0};
     core::Vec3d platform_velocity{0.5, 0.0, 0.0};
+    double platform_half_size = 0.5;
     double start_altitude = 1.0;
 };
 
@@ -40,6 +43,7 @@ public:
           machine_(config.landing) {
         platform_.position = config.platform_position;
         platform_.velocity = config.platform_velocity;
+        platform_.half_size = config.platform_half_size;
         State s;
         s.position.z = -config.start_altitude;
         quad_.reset(s, std::sqrt(params_.mass * params_.gravity / (4.0 * params_.kThrust)));
@@ -48,6 +52,11 @@ public:
     void set_blind(bool blind) { blind_ = blind; }
 
     void step() {
+        if (touchdown_.touched) {
+            ride_platform();
+            return;
+        }
+
         const State& s = quad_.state();
         const double altitude_m = -s.position.z;
 
@@ -85,6 +94,10 @@ public:
         quad_.step(thrust, torque, kDt);
         platform_.step(kDt);
         t_ += kDt;
+
+        if (cfg_.touchdown.in_contact(-quad_.state().position.z)) {
+            touchdown_ = evaluate_touchdown(cfg_.touchdown, t_, quad_.state(), platform_);
+        }
     }
 
     double time() const { return t_; }
@@ -93,6 +106,7 @@ public:
     const core::LandingOutput& last_output() const { return out_; }
     const core::GuidanceOutput& last_guidance() const { return guide_; }
     const core::TargetEstimate& estimate() const { return est_; }
+    const TouchdownResult& touchdown() const { return touchdown_; }
 
     double altitude() const { return -quad_.state().position.z; }
 
@@ -115,6 +129,18 @@ private:
         return cfg;
     }
 
+    void ride_platform() {
+        State s = quad_.state();
+        s.position.x += platform_.velocity.x * kDt;
+        s.position.y += platform_.velocity.y * kDt;
+        s.position.z = -cfg_.touchdown.contact_height;
+        s.velocity = core::Vec3d{platform_.velocity.x, platform_.velocity.y, 0.0};
+        s.omega = core::Vec3d{};
+        quad_.reset(s, 0.0);
+        platform_.step(kDt);
+        t_ += kDt;
+    }
+
     PipelineConfig cfg_;
     QuadParams params_;
     Quad quad_;
@@ -130,6 +156,7 @@ private:
     core::TargetEstimate est_;
     core::LandingOutput out_;
     core::GuidanceOutput guide_;
+    TouchdownResult touchdown_;
     double t_ = 0.0;
     bool blind_ = false;
 };

@@ -424,12 +424,12 @@ void run_track_descend(const std::string& out_path) {
 void run_land(const std::string& out_path) {
     sim::LandingPipeline pipeline;
 
-    sim::CsvLogger log(out_path,
-                       {"t", "plat_x", "x", "err_h", "rel_speed", "alt", "alt_sp", "state"});
+    sim::CsvLogger log(out_path, {"t", "plat_x", "x", "err_h", "rel_speed", "alt", "alt_sp",
+                                  "state", "contact"});
 
     const int max_steps = 30000;
     const int log_every = 10;
-    int landed_steps = 0;
+    int after_contact = 0;
 
     for (int i = 0; i <= max_steps; ++i) {
         pipeline.step();
@@ -438,15 +438,27 @@ void run_land(const std::string& out_path) {
             log.row({pipeline.time(), pipeline.platform().position.x, pipeline.state().position.x,
                      pipeline.true_horiz_error(), pipeline.true_rel_speed(), pipeline.altitude(),
                      pipeline.last_guidance().alt_sp,
-                     static_cast<double>(static_cast<int>(pipeline.last_output().state))});
+                     static_cast<double>(static_cast<int>(pipeline.last_output().state)),
+                     pipeline.touchdown().touched ? 1.0 : 0.0});
         }
 
-        if (pipeline.last_output().landed) {
-            ++landed_steps;
-            if (landed_steps > 1000) {
+        if (pipeline.touchdown().touched) {
+            ++after_contact;
+            if (after_contact > 1000) {
                 break;
             }
         }
+    }
+
+    const sim::TouchdownResult& td = pipeline.touchdown();
+    if (td.touched) {
+        std::printf(
+            "touchdown at t=%.2f s: %s (descent %.2f m/s, relative speed %.2f m/s, "
+            "tilt %.1f deg, offset %.2f m)\n",
+            td.time, td.success ? "SUCCESS" : "FAILED", td.vertical_speed, td.rel_speed,
+            td.tilt * 180.0 / kPi, td.offset);
+    } else {
+        std::printf("no touchdown within the run\n");
     }
 }
 
